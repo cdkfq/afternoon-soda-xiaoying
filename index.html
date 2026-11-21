@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#dae6d7">
+  <meta name="description" content="汽水刚好是冰的，午后刚好有风。留一小会儿，听首歌。">
+  <title>午后，刚刚好 · 给小颖</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="preload" href="./fonts/afternoon-title.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="./fonts/afternoon-letter.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./styles.css?v=20261121a">
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","soda/config":"./js/config.js?v=20261121a","soda/art":"./js/art.js?v=20261121a","soda/world":"./js/world.js?v=20261121a","soda/objects":"./js/objects.js?v=20261121a","soda/audio":"./js/audio.js?v=20261121a"}}</script>
+</head>
+<body>
+  <main id="experience" aria-label="可以探索的午后汽水小铺">
+    <canvas id="scene" aria-label="有窗外小镇、植物、冰汽水、风铃、小收音机与打盹小猫的午后小店"></canvas>
+    <img id="fallback-scene" src="./poster.webp" alt="午后汽水小铺场景" loading="lazy" hidden>
+    <div class="vignette" aria-hidden="true"></div>
+    <div id="loading" aria-live="polite"><span class="loading-ring" aria-hidden="true"></span><span>等一阵风。</span></div>
+    <header class="intro">
+      <p class="eyebrow">给小颖的一小段午后</p>
+      <h1>把午后，<br>分你一点。</h1>
+      <p class="intro-note">汽水刚冰好，歌也替你留着。</p>
+    </header>
+    <div class="audio-controls" aria-label="声音控制">
+      <button id="music-toggle" class="music-toggle" type="button" aria-label="播放音乐" aria-pressed="false">
+        <span class="music-bars" aria-hidden="true"><i></i><i></i><i></i></span><span id="music-label">听首歌</span>
+      </button>
+      <button id="sound-toggle" class="icon-button" type="button" aria-label="关闭音效" aria-pressed="false">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path class="sound-wave" d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>
+      </button>
+    </div>
+    <div class="objects" aria-label="场景中的互动小物件">
+      <button type="button" class="object-hit" data-object="bottle" aria-label="打开给小颖的汽水"><span class="object-dot"></span><span class="object-label">开瓶</span></button>
+      <button type="button" class="object-hit" data-object="chime" aria-label="拨动窗边的风铃"><span class="object-dot"></span><span class="object-label">拨一下</span></button>
+      <button type="button" class="object-hit" data-object="cat" aria-label="摸摸正在打盹的小猫"><span class="object-dot"></span><span class="object-label">摸摸它</span></button>
+      <button type="button" class="object-hit" data-object="note" aria-label="打开吧台上的小纸条"><span class="object-dot"></span><span class="object-label">一张纸条</span></button>
+      <button type="button" class="object-hit" data-object="radio" aria-label="打开或暂停收音机的音乐"><span class="object-dot"></span><span class="object-label">听听看</span></button>
+    </div>
+    <footer class="scene-footer">
+      <div><p id="caption" aria-live="polite">风是轻的，汽水是冰的。</p><button id="begin" type="button">点一下瓶盖，让歌慢慢进来 <span aria-hidden="true">↗</span></button></div>
+      <p class="look-hint">轻轻拖动，看看窗外<span aria-hidden="true"> ⤷</span></p>
+    </footer>
+    <dialog id="note-dialog" aria-labelledby="note-title">
+      <form method="dialog"><button class="note-close icon-button" aria-label="收好纸条" type="submit">×</button></form>
+      <span class="paper-mark" aria-hidden="true"></span>
+      <h2 id="note-title">小颖，</h2>
+      <p>这首歌，觉得你会喜欢。</p>
+      <p>刚好汽水也是冰的。</p>
+      <p>在这里，歇一小会儿。</p>
+      <span class="note-date">午后，刚刚好。</span>
+      <form method="dialog"><button class="keep-note" type="submit">把纸条收好 <span aria-hidden="true">↗</span></button></form>
+    </dialog>
+    <p id="status" class="sr-only" role="status"></p>
+  </main>
+  <script type="module">
+    import('./js/app.js?v=20261121a').catch(async error => {
+      console.warn('Scene unavailable:', error.message);
+      document.body.classList.add('is-ready', 'fallback');
+      document.getElementById('loading').hidden = true;
+      document.getElementById('fallback-scene').hidden = false;
+      if (innerWidth < 650) document.getElementById('fallback-scene').src = './poster-mobile.webp';
+      document.getElementById('caption').textContent = '画面先停在这一帧，歌还可以听。';
+      try { const {startFallback} = await import('./js/fallback.js?v=20261121a'); startFallback(); }
+      catch { document.getElementById('caption').textContent = '页面暂时没载全，刷新一下再试试。'; }
+    });
+  </script>
+</body>
+</html>
