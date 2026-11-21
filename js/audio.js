@@ -1,6 +1,6 @@
-export class AfternoonAudio extends EventTarget {
+export class WinterAudio extends EventTarget {
   constructor(config) {
-    super(); this.config=config; this.context=null; this.effects=null; this.musicGain=null;
+    super(); this.config=config; this.context=null; this.effects=null; this.musicGain=null;this.master=null;
     this.buffer=null; this.source=null; this.pending=null; this.status='idle';
     this.wantsMusic=false; this.muted=false; this.offset=0; this.startedAt=0;
     this.volumeTarget=config.volume; this.lastEffect=0; this.attempt=0;
@@ -10,8 +10,9 @@ export class AfternoonAudio extends EventTarget {
     if(!this.context){
       const AudioContext=window.AudioContext||window.webkitAudioContext;
       if(!AudioContext)throw new Error('AudioContext is unavailable');
-      this.context=new AudioContext();this.effects=this.context.createGain();this.effects.gain.value=.2;this.effects.connect(this.context.destination);
-      this.musicGain=this.context.createGain();this.musicGain.gain.value=0;this.musicGain.connect(this.context.destination);
+      this.context=new AudioContext();this.master=this.context.createGain();this.master.gain.value=this.muted?0:1;this.master.connect(this.context.destination);
+      this.effects=this.context.createGain();this.effects.gain.value=.2;this.effects.connect(this.master);
+      this.musicGain=this.context.createGain();this.musicGain.gain.value=0;this.musicGain.connect(this.master);
     }
     if(this.context.state==='suspended')await this.context.resume();
   }
@@ -47,7 +48,7 @@ export class AfternoonAudio extends EventTarget {
     const now=this.context.currentTime;
     const source=this.context.createBufferSource();source.buffer=this.buffer;source.loop=true;source.connect(this.musicGain);
     this.musicGain.gain.cancelScheduledValues(now);this.musicGain.gain.setValueAtTime(0,now);
-    this.musicGain.gain.linearRampToValueAtTime(this.muted?0:this.volumeTarget,now+this.config.fadeInSeconds);
+    this.musicGain.gain.linearRampToValueAtTime(this.volumeTarget,now+this.config.fadeInSeconds);
     source.start(0,this.offset%this.buffer.duration);this.source=source;this.startedAt=now;
     this.update('playing');
   }
@@ -60,22 +61,17 @@ export class AfternoonAudio extends EventTarget {
   toggle(){if(this.wantsMusic)this.pause();else this.play();}
   setMuted(muted){
     this.muted=muted;
-    if(this.context){const now=this.context.currentTime;this.effects.gain.setTargetAtTime(muted?0:.2,now,.025);this.musicGain.gain.cancelScheduledValues(now);this.musicGain.gain.setTargetAtTime(muted||!this.source?0:this.volumeTarget,now,muted?.025:.2);}
+    if(this.context){const now=this.context.currentTime,param=this.master.gain;if(param.cancelAndHoldAtTime)param.cancelAndHoldAtTime(now);else{const value=param.value;param.cancelScheduledValues(now);param.setValueAtTime(value,now);}param.linearRampToValueAtTime(muted?0:1,now+(muted?.035:.35));}
     this.update(this.status);
   }
-  async effect(kind){
+  async effect(kind,power=1){
     try{await this.unlock();}catch{return;}
     if(this.muted)return;
     const now=this.context.currentTime;if(now-this.lastEffect<.075)return;this.lastEffect=now;
-    if(kind==='pop'){
-      this.noise(.095,500,.85);this.tone(200,.12,.7,'sine',90);this.noise(.65,3400,.23);
-    }else if(kind==='chime'){
-      const base=[1046.5,1174.66,1318.51][Math.floor(Math.random()*3)];
-      [1,2.01,2.76].forEach((ratio,i)=>this.tone(base*ratio,1.4-i*.18,.14/(i+1),'sine'));
-    }else if(kind==='ice'){
-      this.tone(1800,.25,.12,'sine');this.tone(2650,.2,.07,'sine');
-    }else if(kind==='paper')this.noise(.11,1600,.075);
-    else if(kind==='cat'){this.tone(95,.35,.1,'sine',70);this.noise(.25,200,.045);}
+    if(kind==='launch'){this.noise(.55,1600,.12);this.tone(420,.42,.025,'sine',900);}
+    else if(kind==='burst'){this.tone(64,.65,.31*Math.min(power,1.4),'sine',35);this.noise(.5,520,.26);this.noise(.95,3900,.09);}
+    else if(kind==='paper')this.noise(.11,1600,.075);
+    else if(kind==='switch'){this.tone(720,.055,.045,'sine',320);}
   }
   tone(frequency,duration,gain,type='sine',endFrequency){
     const ctx=this.context,now=ctx.currentTime,osc=ctx.createOscillator(),env=ctx.createGain();
@@ -91,5 +87,5 @@ export class AfternoonAudio extends EventTarget {
     filter.type='bandpass';filter.frequency.value=cutoff;filter.Q.value=.7;env.gain.setValueAtTime(gain,now);env.gain.exponentialRampToValueAtTime(.0001,now+duration);
     source.connect(filter);filter.connect(env);env.connect(this.effects);source.start();source.onended=()=>{source.disconnect();filter.disconnect();env.disconnect();};
   }
-  snapshot(){return{status:this.status,wantsMusic:this.wantsMusic,muted:this.muted,hasBuffer:!!this.buffer,duration:this.buffer?.duration??0,offset:this.offset,contextState:this.context?.state??'none',gain:this.musicGain?.gain.value??0};}
+  snapshot(){return{status:this.status,wantsMusic:this.wantsMusic,muted:this.muted,hasBuffer:!!this.buffer,duration:this.buffer?.duration??0,offset:this.offset,contextState:this.context?.state??'none',gain:this.musicGain?.gain.value??0,outputGain:(this.musicGain?.gain.value??0)*(this.master?.gain.value??1),masterGain:this.master?.gain.value??1};}
 }

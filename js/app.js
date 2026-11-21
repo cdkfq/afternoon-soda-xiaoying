@@ -1,153 +1,96 @@
-import * as THREE from 'three';
-import { CONFIG } from 'soda/config';
-import { makeMaterials } from 'soda/art';
-import { createWorld } from 'soda/world';
-import { createObjects } from 'soda/objects';
-import { AfternoonAudio } from 'soda/audio';
+import { CONFIG } from 'winter/config';
+import { WinterAudio } from 'winter/audio';
+import { WinterLandscape,random,glow } from 'winter/landscape';
+import { Fireworks } from 'winter/fireworks';
 
-const $=selector=>document.querySelector(selector);
-const canvas=$('#scene'),container=$('#experience'),caption=$('#caption');
-const audio=new AfternoonAudio(CONFIG.music);
-const reduced=matchMedia('(prefers-reduced-motion: reduce)');
-await Promise.allSettled([document.fonts.load('40px AfternoonDisplay'),document.fonts.load('18px AfternoonLetter')]);
-
-const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:false,powerPreference:'high-performance'});
-renderer.setPixelRatio(Math.min(devicePixelRatio||1,CONFIG.maximumPixelRatio));
-renderer.outputColorSpace=THREE.SRGBColorSpace;
-renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.03;
-renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
-renderer.shadowMap.autoUpdate=false;renderer.shadowMap.needsUpdate=true;
-const scene=new THREE.Scene();scene.background=new THREE.Color('#dce4cc');
-const camera=new THREE.PerspectiveCamera(30,1,.1,110);
-const materials=makeMaterials(renderer);scene.environment=materials.env;scene.environmentIntensity=.35;
-scene.add(new THREE.HemisphereLight('#f5fbf5','#9da896',1.8));
-const sunlight=new THREE.DirectionalLight('#fff9eb',2.5);sunlight.position.set(-3,8,4.5);sunlight.target.position.set(.3,1.4,-.4);
-sunlight.castShadow=true;sunlight.shadow.mapSize.set(2048,2048);sunlight.shadow.camera.left=-6;sunlight.shadow.camera.right=6;sunlight.shadow.camera.top=6;sunlight.shadow.camera.bottom=-5;sunlight.shadow.camera.near=.5;sunlight.shadow.camera.far=25;sunlight.shadow.normalBias=.03;sunlight.shadow.bias=-.00025;sunlight.shadow.radius=3;
-scene.add(sunlight,sunlight.target);
-const fill=new THREE.DirectionalLight('#d6ead9',.8);fill.position.set(5,5,-1);scene.add(fill);
-const world=createWorld(scene,materials),objects=createObjects(scene,materials);
-const intro=$('.intro'),objectUI=$('.objects'),hits=[...document.querySelectorAll('[data-object]')];
-const dialog=$('#note-dialog'),musicButton=$('#music-toggle'),soundButton=$('#sound-toggle');
-const pointer=new THREE.Vector2(),smoothPointer=new THREE.Vector2(),point=new THREE.Vector3();
-const target=new THREE.Vector3(),home=new THREE.Vector3();
-let width=0,height=0,narrow=false,elapsed=0,lastFrame=0,frameId=0,ready=false;
-let captionTimer=0,interactions=0,drag=null,dragged=false,savedFocus=null;
-let staticTime=0,needsRender=true,shadowUntil=0;
+const $=s=>document.querySelector(s),root=$('#night'),reduced=matchMedia('(prefers-reduced-motion: reduce)');
+await Promise.allSettled([document.fonts.load('36px WinterTitle'),document.fonts.load('16px WinterLetter')]);
+const audio=new WinterAudio(CONFIG.music),landscape=new WinterLandscape($('#landscape'));
+const fireworks=new Fireworks($('#fireworks'),landscape,(kind,power,silent)=>{if(!silent)audio.effect(kind,power);});
+const weather=$('#weather'),c=weather.getContext('2d'),touch=$('#sky-touch');
+const rng=random(291),snow=[],pointer={x:0,y:0},smooth={x:0,y:0};
+let w=0,h=0,dpr=1,frameId=0,lastFrame=0,elapsed=0,ready=false,holding=null,captionTimer=0,focusBeforeNote=null,firstGesture=false;
+let lastInteraction=-10,actualFrames=0,lastFpsSample=0,fps=0,staticPaint=true;
 
 function resize(){
-  width=container.clientWidth;height=container.clientHeight;narrow=width<650;
-  renderer.setSize(width,height,false);
-  const aspect=width/height;
-  // Portrait keeps the counter intact and leaves a quiet patch of sky for the letter.
-  const viewHeight=narrow?Math.max(7.65,4.5/aspect):Math.min(9.4,Math.max(6.9,10.2/aspect));
-  home.set(narrow?.12:.3,narrow?6.25:6.3,narrow?13.5:13.3);target.set(0,narrow?3.1:2.8,-.65);
-  camera.aspect=aspect;camera.fov=THREE.MathUtils.radToDeg(2*Math.atan(viewHeight/(2*home.distanceTo(target))));
-  objects.responsive(narrow);world.responsive?.(narrow);
-  document.body.classList.toggle('is-portrait',aspect<1);
-  objects.chime.root.position.x=narrow?1.79:2.65;
-  camera.position.copy(home);camera.lookAt(target);camera.updateProjectionMatrix();camera.updateMatrixWorld();
-  updateHits();
-  needsRender=true;
-  renderer.shadowMap.needsUpdate=true;
+  w=root.clientWidth;h=root.clientHeight;dpr=Math.min(devicePixelRatio||1,CONFIG.maximumPixelRatio);
+  landscape.resize(w,h,dpr);fireworks.resize(w,h,dpr);weather.width=Math.round(w*dpr);weather.height=Math.round(h*dpr);c.setTransform(dpr,0,0,dpr,0,0);
+  const count=Math.round(Math.min(230,Math.max(90,w*h/6500)));snow.length=0;
+  for(let i=0;i<count;i++)snow.push({x:rng()*w,y:rng()*h,z:rng(),phase:rng()*Math.PI*2,drift:rng()});
+  for(const [name,id] of [['lamp','lamp-toggle'],['note','note-open']]){$('#'+id).style.left=landscape.anchors[name].x+'px';$('#'+id).style.top=landscape.anchors[name].y+'px';}
+  fireworks.reduced=reduced.matches;staticPaint=true;
 }
-function updateHits(){
-  camera.updateMatrixWorld();
-  for(const hit of hits){
-    objects.anchors[hit.dataset.object].getWorldPosition(point);point.project(camera);
-    const x=(point.x*.5+.5)*width,y=(-point.y*.5+.5)*height;
-    hit.style.left=`${x}px`;hit.style.top=`${y}px`;
-    hit.hidden=point.z<-1||point.z>1||x<22||x>width-22||y<22||y>height-22;
-  }
+function say(text,duration=6500){clearTimeout(captionTimer);$('#caption').textContent=text;$('#status').textContent=text;if(duration)captionTimer=setTimeout(()=>{$('#caption').textContent='雪慢慢落，我们慢慢看。';},duration);}
+function awaken(){
+  audio.unlock().catch(()=>{});
+  if(!firstGesture){firstGesture=true;if(!audio.wantsMusic)audio.play();$('#launch-label').textContent='再放一场';}
 }
-function say(text,restoreAfter=6000){
-  clearTimeout(captionTimer);caption.textContent=text;$('#status').textContent=text;
-  if(restoreAfter)captionTimer=setTimeout(()=>{caption.textContent=audio.status==='playing'?'有风，有歌，刚好有你来坐坐。':'风是轻的，汽水是冰的。';},restoreAfter);
-}
-function familiar(){if(++interactions>=3)objectUI.classList.add('is-familiar');}
-function action(name){
-  if(dragged)return;
-  familiar();
-  staticTime=elapsed+1.7;needsRender=true;shadowUntil=elapsed+3;
-  if(name==='bottle'){
-    objects.bottle.pop(elapsed);audio.effect('pop');
-    say(objects.bottle.opened?'噗——把今天拧松一点。':'汽水刚刚好。');
-    $('[data-object="bottle"]').setAttribute('aria-label','轻轻碰一下冰汽水');
-    if(!audio.wantsMusic)audio.play();
-  }else if(name==='chime'){
-    objects.chime.ring(elapsed);audio.effect('chime');say('风替你，轻轻敲了一声。');
-  }else if(name==='cat'){
-    objects.cat.pet(elapsed);audio.effect('cat');say('它醒了一下，又放心地眯起眼。');
-  }else if(name==='note'){
-    audio.effect('paper');savedFocus=document.activeElement;dialog.showModal();
-  }else if(name==='radio'){audio.effect('ice');audio.toggle();}
-}
-for(const hit of hits)hit.addEventListener('click',()=>action(hit.dataset.object));
-$('#begin').addEventListener('click',()=>action('bottle'));
-musicButton.addEventListener('click',()=>{audio.unlock().catch(()=>{});audio.toggle();});
-soundButton.addEventListener('click',()=>{audio.unlock().catch(()=>{});audio.setMuted(!audio.muted);});
-dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
-dialog.addEventListener('close',()=>savedFocus?.focus({preventScroll:true}));
-audio.addEventListener('statechange',({detail})=>{
-  const {status,muted,wantsMusic}=detail;
+function fire(x,y,power=1){awaken();fireworks.time=elapsed;const target=fireworks.safeTarget(x,y);if(fireworks.launch(target.x,target.y,power)){lastInteraction=elapsed;say(power>1.35?'这一朵，攒得久一点，也亮得久一点。':['你点的这片天空，亮了。','这一朵，是香槟色的。','雪还在下，烟花刚好。','再看一朵，就一朵。'][fireworks.count%4]);staticPaint=true;}}
+
+touch.addEventListener('pointerdown',event=>{
+  if(holding||event.button>0)return;event.preventDefault();audio.unlock().catch(()=>{});
+  holding={id:event.pointerId,x:event.clientX,y:event.clientY,start:performance.now()};touch.setPointerCapture(event.pointerId);
+});
+touch.addEventListener('pointermove',event=>{
+  pointer.x=(event.clientX/w-.5);pointer.y=(event.clientY/h-.5);
+  if(holding&&holding.id===event.pointerId){holding.x=event.clientX;holding.y=event.clientY;}
+});
+touch.addEventListener('pointerup',event=>{
+  if(!holding||holding.id!==event.pointerId)return;
+  const press=holding;holding=null;fireworks.charge=null;
+  const duration=(performance.now()-press.start)/1000;fire(event.clientX,event.clientY,1+Math.min(1,duration/1.6)*.8);
+});
+touch.addEventListener('pointercancel',()=>{holding=null;fireworks.charge=null;staticPaint=true;});touch.addEventListener('lostpointercapture',()=>{if(holding){holding=null;fireworks.charge=null;}});
+touch.addEventListener('pointerleave',()=>{if(!holding){pointer.x=pointer.y=0;}});
+touch.addEventListener('keydown',event=>{if(event.code==='Space'||event.code==='Enter'){event.preventDefault();if(!event.repeat)fire(w*(.48+Math.random()*.25),h*(.26+Math.random()*.13),1.15);}});
+$('#launch').addEventListener('click',()=>{awaken();fireworks.time=elapsed;fireworks.show();lastInteraction=elapsed;say('这一小场烟花，慢慢看。',12000);$('#launch-label').textContent='再放一场';staticPaint=true;});
+$('#music-toggle').addEventListener('click',()=>{audio.unlock().catch(()=>{});audio.toggle();firstGesture=true;});
+$('#sound-toggle').addEventListener('click',()=>{audio.unlock().catch(()=>{});audio.setMuted(!audio.muted);});
+$('#lamp-toggle').addEventListener('click',()=>{landscape.setLamp(!landscape.lampLit);$('#lamp-toggle').setAttribute('aria-pressed',String(landscape.lampLit));$('#lamp-toggle').setAttribute('aria-label',landscape.lampLit?'调暗湖岸的路灯':'把湖岸的路灯调亮');audio.effect('switch');say(landscape.lampLit?'给雪地，留一盏暖灯。':'灯暗一点，烟花就更清楚了。');staticPaint=true;});
+const note=$('#note-dialog');
+$('#note-open').addEventListener('click',()=>{focusBeforeNote=document.activeElement;audio.effect('paper');note.showModal();});
+note.addEventListener('close',()=>focusBeforeNote?.focus({preventScroll:true}));
+note.addEventListener('click',event=>{if(event.target===note){const r=note.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)note.close();}});
+audio.addEventListener('statechange',({detail:{status,muted,wantsMusic}})=>{
   document.body.classList.toggle('is-playing',status==='playing');document.body.classList.toggle('is-loading',status==='loading');document.body.classList.toggle('is-muted',muted);
-  objects.radio.playing=status==='playing'&&!muted;
-  needsRender=true;
-  const label=status==='playing'?'What Are Words':status==='loading'?'歌在路上…':status==='error'?'再听一次':'听首歌';
-  $('#music-label').textContent=label;musicButton.setAttribute('aria-pressed',String(wantsMusic));
-  musicButton.setAttribute('aria-label',status==='loading'?'取消音乐播放':status==='playing'?'暂停音乐':'播放冯提莫的 What Are Words');
-  soundButton.setAttribute('aria-pressed',String(muted));soundButton.setAttribute('aria-label',muted?'打开声音':'关闭声音');
-  if(status==='loading')say('歌在路上，先听一声风铃。',0);
-  else if(status==='playing')say('这首歌，慢慢听。',8000);
-  else if(status==='error')say('歌暂时没接上，点收音机再试一次。',0);
-  else if(status==='paused')say('歌先歇一会儿，风还在。');
+  $('#music-toggle').setAttribute('aria-pressed',String(wantsMusic));$('#music-toggle').setAttribute('aria-label',wantsMusic?'暂停音乐':'播放冯提莫的 What Are Words');
+  $('#sound-toggle').setAttribute('aria-pressed',String(muted));$('#sound-toggle').setAttribute('aria-label',muted?'打开声音':'关闭声音');
+  $('#music-label').textContent=status==='loading'?'歌在路上…':status==='playing'?'What Are Words':status==='error'?'再试一次':'听首歌';
+  $('#music-status').textContent=status==='loading'?'歌在路上，烟花可以先放。':status==='error'?'音乐暂时未加载，点右上角重试。':status==='paused'?'音乐歇一会儿，烟花继续。':'What Are Words · 冯提莫';
+  if(status==='playing')say('歌慢慢响起来了。',5000);
+  staticPaint=true;
 });
-canvas.addEventListener('pointerdown',event=>{
-  drag={x:event.clientX,y:event.clientY,id:event.pointerId};dragged=false;canvas.setPointerCapture(event.pointerId);
-});
-canvas.addEventListener('pointermove',event=>{
-  if(reduced.matches)return;
-  if(drag){
-    const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>8)dragged=true;
-    pointer.set(THREE.MathUtils.clamp(dx/width*3,-1,1),THREE.MathUtils.clamp(dy/height*2,-1,1));
-    if(dragged)objects.bottle.nudge(-dx/width*.13);
-  }else if(event.pointerType==='mouse')pointer.set((event.clientX/width-.5)*.75,(event.clientY/height-.5)*.45);
-});
-function endDrag(){if(dragged)audio.effect('ice');drag=null;pointer.multiplyScalar(.3);setTimeout(()=>{dragged=false;},0);}
-canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',()=>{drag=null;pointer.set(0,0);});canvas.addEventListener('pointerleave',()=>{if(!drag)pointer.set(0,0);});
-// Raycasting makes the whole object respond, while the native buttons remain keyboard accessible.
-const raycaster=new THREE.Raycaster();
-canvas.addEventListener('click',event=>{
-  if(dragged)return;
-  const ndc=new THREE.Vector2(event.clientX/width*2-1,1-event.clientY/height*2);raycaster.setFromCamera(ndc,camera);
-  const candidates={bottle:objects.bottle.root,chime:objects.chime.root,cat:objects.cat.root,note:objects.note,radio:objects.radio.root};
-  const intersections=raycaster.intersectObjects(Object.values(candidates),true);
-  if(!intersections.length)return;let node=intersections[0].object;
-  while(node){const name=Object.keys(candidates).find(key=>candidates[key]===node);if(name){action(name);break;}node=node.parent;}
-});
-canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();$('#fallback-scene').hidden=false;say('午后先停在这一帧，刷新可以继续走走。',0);});
-const startedAt=performance.now();
+function snowflake(p){
+  const radius=.45+p.z*p.z*2.3;c.globalAlpha=.18+p.z*.45;c.fillStyle=p.z>.85?'#dae8f3':'#c4d5e8';
+  if(p.z>.85){const sx=p.x,sy=p.y;c.save();c.translate(sx,sy);c.rotate(p.phase+elapsed*.11);c.beginPath();for(let i=0;i<3;i++){const angle=i*Math.PI/3,x=Math.cos(angle)*radius,y=Math.sin(angle)*radius;c.moveTo(-x,-y);c.lineTo(x,y);}c.lineWidth=.6;c.strokeStyle='#dbe9f2';c.stroke();c.restore();}else{c.beginPath();c.arc(p.x,p.y,radius,0,Math.PI*2);c.fill();}
+  c.globalAlpha=1;
+}
+function drawWeather(dt){
+  c.clearRect(0,0,w,h);
+  if(!reduced.matches){
+    // Chimney smoke is a quiet moving veil, not another particle effect competing with the sky.
+    const source=landscape.chimney;
+    for(let i=0;i<7;i++){const t=((elapsed*.13+i/7)%1),x=source.x+Math.sin(t*4)*8+t*15,y=source.y-t*h*.08;c.save();c.translate(x,y);c.scale(1,.65);glow(c,0,0,(4+t*13),'133,151,172',Math.sin(t*Math.PI)*.045);c.restore();}
+  }
+  landscape.drawForeground(c,fireworks.light);
+  if(!reduced.matches){for(const p of snow){p.y+=dt*(8+p.z*p.z*27);p.x+=dt*(3+p.drift*6+Math.sin(elapsed*.2+p.phase)*4);if(p.y>h+8){p.y=-8;p.x=rng()*w;}if(p.x>w+10)p.x=-10;snowflake(p);}}
+  else{for(let i=0;i<snow.length;i+=4)snowflake(snow[i]);}
+}
+const startedAt=performance.now();let openingStarted=false;
 function frame(now){
-  frameId=0;if(document.hidden)return;
-  frameId=requestAnimationFrame(frame);
-  if(now-lastFrame<1000/CONFIG.maximumFps-.5)return;
-  const dt=Math.min(.05,(now-lastFrame)/1000||.016);lastFrame=now;elapsed+=dt;
-  smoothPointer.lerp(pointer,1-Math.exp(-dt*3));
-  const entrance=reduced.matches?1:THREE.MathUtils.smoothstep((now-startedAt)/1000,0,2.8);
-  camera.position.copy(home);camera.position.x+=smoothPointer.x*.24;camera.position.y-=smoothPointer.y*.12;
-  camera.zoom=1-(1-entrance)*.045;camera.updateProjectionMatrix();
-  camera.lookAt(target.x+smoothPointer.x*.1,target.y-(1-entrance)*.16,target.z);
-  if(reduced.matches&&!needsRender&&ready)return;
-  if(!reduced.matches){world.update(elapsed);objects.update(elapsed);}else{world.update(0);objects.update(staticTime);}
-  if(elapsed<shadowUntil)renderer.shadowMap.needsUpdate=true;
-  renderer.render(scene,camera);updateHits();
-  needsRender=false;
+  frameId=0;if(document.hidden)return;frameId=requestAnimationFrame(frame);
+  if(now-lastFrame<1000/CONFIG.maximumFps-.4)return;
+  const dt=Math.min(.04,(now-lastFrame)/1000||.016);lastFrame=now;elapsed+=dt;
+  actualFrames++;if(now-lastFpsSample>=1000){fps=actualFrames*1000/(now-lastFpsSample);actualFrames=0;lastFpsSample=now;}
+  if(reduced.matches&&!staticPaint&&!holding)return;
+  if(holding&&!reduced.matches){const amount=Math.min(1,(now-holding.start)/1600);fireworks.setCharge(holding.x,holding.y,amount);}
+  fireworks.update(dt,elapsed);fireworks.draw();drawWeather(dt);staticPaint=false;
   if(!ready){ready=true;requestAnimationFrame(()=>document.body.classList.add('is-ready'));}
+  if(!openingStarted&&!reduced.matches&&now-startedAt>1550){openingStarted=true;fireworks.launch(w*(w/h<.8?.64:.64),h*(w/h<.8?.44:.34),1.1,{color:0,type:'willow',silent:true});}
+  if(!reduced.matches&&firstGesture&&elapsed-lastInteraction>25&&!note.open&&fireworks.sparks.length<50){fireworks.launch(w*(.4+Math.random()*.4),h*(.25+Math.random()*.18),.7,{color:fireworks.count%3,type:'peony',silent:true});lastInteraction=elapsed;}
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelAnimationFrame(frameId);frameId=0;}else{lastFrame=performance.now();if(!frameId)frameId=requestAnimationFrame(frame);if(audio.context?.state==='suspended'&&audio.wantsMusic)audio.unlock().catch(()=>{});}});
-window.addEventListener('resize',resize);new ResizeObserver(resize).observe(container);
-reduced.addEventListener('change',()=>{pointer.set(0,0);smoothPointer.set(0,0);needsRender=true;});
-resize();frameId=requestAnimationFrame(frame);
-if(new URLSearchParams(location.search).has('debug')){
-  window.afternoon={audio,objects,camera,scene,renderer,world,snapshot:()=>({ready,narrow,width,height,time:elapsed,reducedMotion:reduced.matches,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,music:audio.snapshot(),bottleOpened:objects.bottle.opened,dialogOpen:dialog.open,maximumFps:CONFIG.maximumFps})};
-}
+window.addEventListener('resize',resize);new ResizeObserver(resize).observe(root);
+reduced.addEventListener('change',()=>{fireworks.reduced=reduced.matches;fireworks.scheduled.length=0;fireworks.rockets.length=0;fireworks.sparks.length=0;fireworks.c.clearRect(0,0,w,h);holding=null;fireworks.charge=null;staticPaint=true;});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelAnimationFrame(frameId);frameId=0;holding=null;fireworks.charge=null;}else{lastFrame=performance.now();staticPaint=true;if(!frameId)frameId=requestAnimationFrame(frame);}});
+resize();lastFrame=performance.now();lastFpsSample=lastFrame;frameId=requestAnimationFrame(frame);
+if(new URLSearchParams(location.search).has('debug'))window.winter={audio,landscape,fireworks,snapshot:()=>({ready,width:w,height:h,dpr,reducedMotion:reduced.matches,time:elapsed,fps,maximumFps:CONFIG.maximumFps,fireworks:fireworks.snapshot(),music:audio.snapshot(),lampLit:landscape.lampLit,noteOpen:note.open})};
